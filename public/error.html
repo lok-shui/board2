@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <style>
+      #errorPage {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        left: 0;
+        z-index: 9999;
+        background-color: rgba(37, 36, 39, 1);
+        padding-top: 80px;
+        text-align: center;
+      }
+      .error-pic {
+        display: block;
+        height: 270px;
+        width: 270px;
+        margin: auto;
+        background-size: 100% 100%;
+        background-image: url('./images/b_net_error.png');
+      }
+      .error-text {
+        font-size: 22px;
+        line-height: 38px;
+        color: rgba(255, 255, 255, 0.85);
+      }
+      .error-btn {
+        width: 190px;
+        height: 70px;
+        line-height: 70px;
+        border-radius: 35px;
+        border: 3px solid rgba(255, 255, 255, 0.85);
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 22px;
+        margin: 18px auto 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="errorPage">
+      <div class="error-pic"></div>
+      <div class="error-text">网络异常</div>
+      <div class="error-btn" onclick="quit()">再试一次</div>
+    </div> 
+  </body>
+  <script>
+    window.quit = function() {
+      console.log('quit')
+      window.AIT && window.AIT.exit()
+    }
+  </script>
+</html>

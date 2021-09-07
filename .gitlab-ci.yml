@@ -1,0 +1,147 @@
+# INFO 有如下产品级变量在gitlab的group中定义
+# PRODUCT_NAME: 产品名称
+# PRODUCT_RS_REPO: 产品运行时结构代码库的地址，SSH形式
+# DOCKER_REGISTRY_USERNAME，向二进制库分发docker image时所需的身份验证信息
+# DOCKER_REGISTRY_PASSWORD
+# K8S_DEV_TOKEN
+
+stages:
+    - build
+    - unit test
+    - code review
+    - distribute
+    - deploy to dev # 部署docker image至dev环境，仅服务类型的项目有此阶段
+    - integration test # 测试
+    - enlist # 服役，正式成为产品的成员发布，仅服务类型的项目有此阶段
+    - retirement # 退役，正式成为产品的成员发布，仅服务类型的项目有此阶段
+
+npm unit test:
+    stage: unit test
+    only:
+        - merge_requests
+    image:
+        name: docker.dm-ai.cn/public/node:12-alpine3.12
+    script:
+        - echo unit test
+        # - if [ ! -f "package.json" ]; then exit; fi
+        # - apk add jq
+        # - if [ $(cat package.json | jq '.scripts."unit-test"') == "null" ]; then exit 1; fi;
+        # - npm install --global mocha --registry=https://nexus.dm-ai.cn/repository/npm/
+        # - npm install --registry=https://nexus.dm-ai.cn/repository/npm/
+        # - npm run unit-test
+    tags:
+        - k8s-runner
+
+code review:
+    stage: code review
+    only:
+        - merge_requests
+    allow_failure: true
+    image:
+        name: docker.dm-ai.cn/public/sci:0.0.9
+    script:
+        - echo code review
+    tags:
+        - k8s-runner
+
+build & push docker image:
+    stage: distribute
+    only:
+        - merge_requests
+        - /^\d+\.\d+\.\d+$/
+    image:
+        name: docker.dm-ai.cn/public/kaniko-executor:debug-v1.3.0
+        entrypoint: [""]
+    script:
+        - if [ $CI_COMMIT_TAG ];
+          then DOCKER_IMAGE_TAG=docker.dm-ai.cn/${PRODUCT_NAME}/${CI_PROJECT_NAME}:${CI_COMMIT_TAG};
+          else DOCKER_IMAGE_TAG=docker.dm-ai.cn/${PRODUCT_NAME}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA};
+          fi
+        - echo "{\"auths\":{\"docker.dm-ai.cn\":{\"username\":\"${DOCKER_REGISTRY_USERNAME}\",\"password\":\"${DOCKER_REGISTRY_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+        - /kaniko/executor --context ${CI_PROJECT_DIR} --dockerfile ./Dockerfile --destination ${DOCKER_IMAGE_TAG}
+    tags:
+        - k8s-runner
+
+deploy to dev:
+    stage: deploy to dev
+    only:
+        - merge_requests
+        - /^\d+\.\d+\.\d+$/
+    image:
+        name: docker.dm-ai.cn/public/sci:0.0.9
+    script:
+        - if [ $CI_COMMIT_TAG ];
+          then CURRENT_VERSION=${CI_COMMIT_TAG};
+          else CURRENT_VERSION=${CI_COMMIT_SHORT_SHA};
+          fi
+        - npm install -g dm-runtime-structure-manager --registry=https://nexus.dm-ai.cn/repository/npm/
+        - rsm substitute .runtime-structure.json .runtime-structure.json --CURRENT_VERSION=${CURRENT_VERSION}
+        - rsm generate .runtime-structure.yml .runtime-structure.json --DOMAIN_NAME=dev.dm-ai.cn --RUNTIME_ENV=dev --MONGODB_URI="${MONGODB_URI}"
+        - echo ${K8S_DEV_TOKEN} | base64 -d > /root/.kube/config
+        - kubectl apply -f .runtime-structure.yml
+        - npm install -g kubectl-gc --registry=https://nexus.dm-ai.cn/repository/npm/
+        - kubectl-gc --namespace=${PRODUCT_NAME}
+    environment:
+        name: dev
+        url: https://${CI_PROJECT_NAME}.dev.dm-ai.cn
+    tags:
+        - k8s-runner
+
+integration test on dev:
+    stage: integration test
+    only:
+        - merge_requests
+        - /^\d+\.\d+\.\d+$/
+    image:
+        name: docker.dm-ai.cn/public/sci:0.0.9
+    script:
+        - echo test
+    tags:
+        - k8s-runner
+
+enlist:
+    stage: enlist
+    only:
+        - /^\d+\.\d+\.\d+$/
+    variables:
+        CURRENT_VERSION: ${CI_COMMIT_REF_NAME}
+    image: docker.dm-ai.cn/public/sci:0.0.9
+    script:
+        - npm install -g dm-runtime-structure-manager --registry=https://nexus.dm-ai.cn/repository/npm/
+        - rsm substitute .runtime-structure.json .runtime-structure.json --CURRENT_VERSION=${CURRENT_VERSION}
+        - git clone ${PRODUCT_RS_REPO} && cd $(echo ${PRODUCT_RS_REPO} | sed 's/.*\/\(.*\).git/\1/g')
+        # 若存在patch分支，就退出，一次只能走一个patch流程
+        - PATCH=$(git branch --remote | sed -n "/origin\/patch/p")
+        - echo $PATCH
+        - if [ $PATCH ]; then echo "当前已有一个patch流程在运行，请稍候再试" & exit 1; fi
+
+        - git switch master
+        # 判断升级的级别: major: 4, minor: 2, patch: 1, no: 0
+        - CHANGE_LEVEL=$(rsm get-change-level ../.runtime-structure.json .runtime-structure.json)
+        - echo $CHANGE_LEVEL
+        # enlist
+        - if [ $CHANGE_LEVEL -gt 1 ]; then git switch dev;
+          else GIT_PUSH_PARAMETER="--set-upstream origin patch" && git checkout -b patch;
+          fi
+        - git status
+        # 合并，策略：major增加版本，minor替换版本，patch替换版本
+        - rsm merge .runtime-structure.json .runtime-structure.json ../.runtime-structure.json
+        - 'git commit -a -m "sci: component ${CI_PROJECT_NAME}(id:${CI_PROJECT_ID}):${CURRENT_VERSION} published with ${CHANGE_LEVEL} level of update enlist."'
+        - git push $GIT_PUSH_PARAMETER
+    environment:
+        name: enlist/${CI_COMMIT_REF_NAME}
+        on_stop: retire
+    tags:
+        - k8s-runner
+
+retire:
+    stage: retirement
+    only:
+        - /^\d+\.\d+\.\d+$/
+    when: manual
+    image: docker.dm-ai.cn/public/sci:0.0.9
+    script:
+        - echo "${CI_PROJECT_NAME}(id:${CI_PROJECT_ID}):${CURRENT_VERSION}退役"
+    environment:
+        name: enlist/${CI_COMMIT_REF_NAME}
+        action: stop

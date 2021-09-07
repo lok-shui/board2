@@ -1,0 +1,34 @@
+{
+    "name": "ait",
+    "properties": {
+        "repository": "git@gitlab.dm-ai.cn:AIT/deployment.git"
+    },
+    "services": [
+        {
+            "name": "ait-tutor-board-lamp",
+            "description": "讲题板台灯版本",
+            "properties": {
+                "group": "ait",
+                "author": {
+                    "name": "xieyifang",
+                    "email": "xieyifang@dm-ai.cn"
+                }
+            },
+            "port": 80,
+            "entries": [
+                "https://ait-tutor-board-lamp.#{DOMAIN_NAME}",
+                "http://ait-tutor-board-lamp.#{DOMAIN_NAME}"
+            ],
+            "versions": {
+                "${CURRENT_VERSION}": {
+                    "replicas": 3,
+                    "weight": 100
+                }
+            },
+            "requirements": {
+                "cpu": 1,
+                "memory": 1
+            }
+        }
+    ]
+}
